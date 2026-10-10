@@ -1,0 +1,852 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import csv
+import sqlite3
+from datetime import datetime, timedelta
+DB_NAME = "attendance.db"
+#	COLORS
+BG = "#f4f6f8"
+SIDEBAR = "#172033"
+CARD = "#ffffff"
+TEXT = "#172033"
+MUTED = "#6b7280"
+BLUE = "#2563eb"
+GREEN = "#16a34a"
+RED = "#dc2626"
+BORDER = "#e5e7eb"
+19
+#	MAIN WINDOW
+root = tk.Tk()
+root.title("Employee Attendance Analyzer")
+root.geometry("1200x750")
+root.minsize(1000, 650)
+25
+#	DATABASE
+def connect_db():
+return sqlite3.connect(DB_NAME)
+29
+def setup_database():
+conn = connect_db()
+cur = conn.cursor()
+cur.execute("""
+CREATE TABLE IF NOT EXISTS attendance (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+employee_name TEXT NOT NULL,
+attendance_date TEXT NOT NULL,
+status TEXT NOT NULL,
+reason TEXT
+)
+""")
+cur.execute("""
+CREATE TABLE IF NOT EXISTS employees (
+employee_id TEXT PRIMARY KEY,
+employee_name TEXT NOT NULL
+)
+""")
+48
+attendance_columns = {
+row[1] for row in cur.execute("PRAGMA table_info(attendance)")
+}
+if "employee_id" not in attendance_columns:
+cur.execute("ALTER TABLE attendance ADD COLUMN employee_id TEXT")
+employee_ids = {
+row[0] for row in cur.execute("SELECT employee_id FROM employees")
+if row[0] and row[0].isdigit()
+}
+next_employee_number =
+nonnumeric_ids = cur.execute(
+"SELECT employee_id FROM employees ORDER BY employee_id"
+).fetchall()
+for (old_employee_id,) in nonnumeric_ids:
+if old_employee_id and old_employee_id.isdigit():
+continue
+while str(next_employee_number) in employee_ids:
+next_employee_number +=
+new_employee_id = str(next_employee_number)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+229
+conn.close()
+231
+percentage = (present / records * 100) if records else 0
+employee_count_label.config(text=str(employees))
+total_record_label.config(text=str(records))
+present_count_label.config(text=str(present))
+absent_count_label.config(text=str(absent))
+overall_percentage_label.config(text=f"{percentage:.1f}%")
+239
+#	ADD / UPDATE ATTENDANCE
+editing_record_id = None
+def save_attendance():
+employee_id = employee_id_entry.get().strip()
+name = employee_name_entry.get().strip()
+date = date_entry.get().strip()
+status = status_combo.get()
+reason = reason_entry.get().strip()
+if not employee_id:
+messagebox.showwarning("Missing Information", "Please enter a unique employee ID.")
+return
+253
+if not employee_id.isdigit() or int(employee_id) < 1:
+messagebox.showwarning("Invalid Employee ID", "Enter a positive whole-number employee ID.")
+return
+257
+if not name:
+conn = connect_db()
+cur = conn.cursor()
+cur.execute(
+"SELECT employee_name FROM employees WHERE employee_id=?",
+(employee_id,)
+)
+registered_employee_name = cur.fetchone()
+conn.close()
+if registered_employee_name:
+name = registered_employee_name[ 0]
+employee_name_entry.insert(0, name)
+270
+if not name:
+messagebox.showwarning("Missing Information", "Please enter employee name.")
+return
+274
+if not valid_date(date):
+messagebox.showwarning(
+"Invalid Date",
+"Use YYYY-MM-DD format.\nExample: 2026-10-03"
+)
+return
+281
+if not status:
+messagebox.showwarning("Missing Information", "Please select Present or Absent.")
+return
+285
+if status == "Absent" and not reason:
+messagebox.showwarning(
+"Missing Reason",
+"Please enter the reason for absence."
+)
+return
+292
+if status == "Present":
+reason = ""
+conn = connect_db()
+cur = conn.cursor()
+cur.execute(
+"SELECT employee_name FROM employees WHERE employee_id=?",
+(employee_id,)
+)
+registered_employee = cur.fetchone()
+if registered_employee and registered_employee[0] != name:
+conn.close()
+messagebox.showwarning(
+"Employee ID In Use",
+f"ID {employee_id} is already assigned to {registered_employee[0]}."
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#	ALL RECORDS
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def show_attendance_context_menu(event):
+row_id = all_records_tree.identify_row(event.y)
+if not row_id:
+return
+553
+all_records_tree.selection_set(row_id)
+try:
+attendance_context_menu.tk_popup(event.x_root, event.y_root)
+finally:
+attendance_context_menu.grab_release()
+559
+#	DATE REPORT
+def load_date_report():
+date = search_date_entry.get().strip()
+if not valid_date(date):
+date = today()
+search_date_entry.delete(0, tk.END)
+search_date_entry.insert(0, date)
+568
+clear_tree(date_report_tree)
+570
+conn = connect_db()
+cur = conn.cursor()
+cur.execute("""
+SELECT employee_id, employee_name, attendance_date, status, COALESCE(reason,'')
+FROM attendance
+WHERE attendance_date=?
+ORDER BY CAST(employee_id AS INTEGER), employee_id
+""", (date,))
+rows = cur.fetchall()
+cur.execute("""
+SELECT COUNT(*) FROM attendance
+WHERE attendance_date=? AND status='Present'
+""", (date,))
+present = cur.fetchone()[0]
+cur.execute("""
+SELECT COUNT(*) FROM attendance
+WHERE attendance_date=? AND status='Absent'
+""", (date,))
+absent = cur.fetchone()[0]
+conn.close()
+595
+date_report_title.config(
+text=f"Date: {date}	|	Present: {present}	|	Absent: {absent}"
+)
+599
+for row in rows:
+date_report_tree.insert("", tk.END, values=row)
+update_report_empty_state(
+date_report_tree,
+date_report_empty_label,
+f"No attendance records found for {date}."
+)
+607
+#	WEEKLY REPORT
+def load_weekly_report():
+value = week_entry.get().strip()
+if not valid_date(value):
+messagebox.showwarning(
+"Invalid Date",
+"Enter any date in the week using YYYY-MM-DD."
+)
+return
+618
+selected = datetime.strptime(value, "%Y-%m-%d")
+monday = selected - timedelta(days=selected.weekday())
+sunday = monday + timedelta(days=6)
+start = monday.strftime("%Y-%m-%d")
+end = sunday.strftime("%Y-%m-%d")
+clear_tree(weekly_tree)
+627
+conn = connect_db()
+
+cur = conn.cursor()
+cur.execute("""
+SELECT employee_id, employee_name,
+SUM(CASE WHEN status='Present' THEN 1 ELSE 0 END),
+SUM(CASE WHEN status='Absent' THEN 1 ELSE 0 END),
+COUNT(*)
+FROM attendance
+WHERE attendance_date BETWEEN ? AND ?
+GROUP BY employee_id, employee_name
+ORDER BY CAST(employee_id AS INTEGER), employee_id
+""", (start, end))
+rows = cur.fetchall()
+conn.close()
+644
+weekly_title.config(
+text=f"Weekly Attendance — {start} to {end}"
+)
+648
+for employee_id, name, present, absent, total in rows:
+percentage = present / total * if total else
+weekly_tree.insert(
+"", tk.END,
+values=(employee_id, name, present, absent, total, f"{percentage:.1f}%")
+)
+update_report_empty_state(
+weekly_tree,
+weekly_empty_label,
+f"No attendance records found from {start} to {end}."
+)
+660
+#	MONTHLY REPORT
+def load_monthly_report():
+value = month_entry.get().strip()
+try:
+month = datetime.strptime(value, "%Y-%m").strftime("%Y-%m")
+except ValueError:
+messagebox.showwarning(
+"Invalid Month",
+"Enter month as YYYY-MM.\nExample: 2026-10"
+)
+return
+673
+clear_tree(monthly_tree)
+675
+conn = connect_db()
+cur = conn.cursor()
+cur.execute("""
+SELECT employee_id, employee_name,
+SUM(CASE WHEN status='Present' THEN 1 ELSE 0 END),
+SUM(CASE WHEN status='Absent' THEN 1 ELSE 0 END),
+COUNT(*)
+FROM attendance
+WHERE substr(attendance_date,1,7)=?
+GROUP BY employee_id, employee_name
+ORDER BY CAST(employee_id AS INTEGER), employee_id
+""", (month,))
+689
+rows = cur.fetchall()
+conn.close()
+692
+monthly_title.config(text=f"Monthly Attendance — {month}")
+for employee_id, name, present, absent, total in rows:
+percentage = present / total * if total else
+monthly_tree.insert(
+"", tk.END,
+values=(employee_id, name, present, absent, total, f"{percentage:.1f}%")
+
+clear_tree(ranking_tree)
+710
+conn = connect_db()
+cur = conn.cursor()
+cur.execute("""
+SELECT employee_id, employee_name,
+SUM(CASE WHEN status='Present' THEN 1 ELSE 0 END),
+SUM(CASE WHEN status='Absent' THEN 1 ELSE 0 END),
+COUNT(*)
+FROM attendance
+GROUP BY employee_id, employee_name
+""")
+722
+rows = cur.fetchall()
+conn.close()
+725
+data = []
+for employee_id, name, present, absent, total in rows:
+percentage = present / total * if total else
+data.append((employee_id, name, present, absent, total, percentage))
+data.sort(key=lambda x: (-x[5], x[1], x[0]))
+for row in data:
+ranking_tree.insert(
+"", tk.END,
+values=(row[0], row[1], row[2], row[3], row[4], f"{row[5]:.1f}%")
+)
+739
+if data:
+highest = max(data, key=lambda x: x[5])
+lowest = min(data, key=lambda x: x[5])
+highest_label.config(
+text=f"Highest Attendance\n{highest[1]} (ID {highest[0]}) — {highest[5]:.1f}%"
+)
+lowest_label.config(
+text=f"Lowest Attendance\n{lowest[1]} (ID {lowest[0]}) — {lowest[5]:.1f}%"
+)
+else:
+highest_label.config(text="Highest Attendance\nNo data")
+lowest_label.config(text="Lowest Attendance\nNo data")
+#	NAVIGATION
+pages = {}
+def show_page(name):
+for page in pages.values():
+page.pack_forget()
+760
+pages[name].pack(fill="both", expand=True)
+762
+if name == "Dashboard":
+refresh_dashboard()
+load_ranking()
+elif name == "Attendance":
+load_all_records()
+elif name == "Date Report":
+load_date_report()
+elif name == "Weekly Report":
+load_weekly_report()
+elif name == "Monthly Report":
+load_monthly_report()
+774
+# ============================================================
+# SIDEBAR
+# ============================================================
+sidebar = tk.Frame(root, bg=SIDEBAR, width=230)
+sidebar.pack(side="left", fill="y")
+sidebar.pack_propagate(False)
+781
+tk.Label(
+sidebar,
+text="Attendance\nAnalyzer",
+bg=SIDEBAR,
+fg=CARD,
+font=("Arial", 23, "bold"),
+justify="left"
+
+).pack(padx=25, pady=(35, 25), anchor="w")
+790
+tk.Label(
+sidebar,
+text="REPORTS & TOOLS",
+bg=SIDEBAR,
+fg="#9ca3af",
+font=("Arial", 9, "bold")
+).pack(padx=25, pady=(0, 12), anchor="w")
+798
+def nav_button(text, page):
+tk.Button(
+sidebar,
+text=text,
+command=lambda: show_page(page),
+bg=SIDEBAR,
+fg="#d1d5db",
+activebackground="#27344d",
+activeforeground=CARD,
+font=("Arial", 11),
+relief="flat",
+bd=0,
+anchor="w",
+padx=25,
+pady=11,
+cursor="hand2"
+).pack(fill="x")
+816
+nav_button(" Dashboard", "Dashboard")
+nav_button(" Mark Attendance", "Attendance")
+nav_button(" Date-wise Search", "Date Report")
+nav_button(" Weekly Report", "Weekly Report")
+nav_button(" Monthly Report", "Monthly Report")
+# ============================================================
+# CONTENT AREA
+# ============================================================
+content = tk.Frame(root, bg=BG)
+content.pack(side="left", fill="both", expand=True)
+# ============================================================
+# DASHBOARD
+# ============================================================
+dashboard_page = tk.Frame(content, bg=BG)
+pages["Dashboard"] = dashboard_page
+tk.Label(
+dashboard_page,
+text="Attendance Dashboard",
+bg=BG, fg=TEXT,
+font=("Arial", 25, "bold")
+).pack(anchor="w", padx=30, pady=(25, 3))
+841
+tk.Label(
+dashboard_page,
+text="Overview of employee attendance and performance",
+bg=BG, fg=MUTED,
+font=("Arial", 11)
+).pack(anchor="w", padx=30)
+848
+cards = tk.Frame(dashboard_page, bg=BG)
+cards.pack(fill="x", padx=25, pady=18)
+def stat_card(parent, title, value):
+frame = tk.Frame(
+parent, bg=CARD,
+highlightthickness=1,
+highlightbackground=BORDER
+)
+frame.pack(side="left", expand=True, fill="both", padx=6)
+tk.Label(
+frame, text=title,
+bg=CARD, fg=MUTED,
+font=("Arial", 10, "bold")
+).pack(anchor="w", padx=18, pady=(18, 5))
+865
+label = tk.Label(
+frame, text=value,
+bg=CARD, fg=TEXT,
+
+font=("Arial", 23, "bold")
+)
+label.pack(anchor="w", padx=18, pady=(0, 18))
+return label
+873
+employee_count_label = stat_card(cards, "EMPLOYEES", "0")
+total_record_label = stat_card(cards, "TOTAL RECORDS", "0")
+present_count_label = stat_card(cards, "PRESENT", "0")
+absent_count_label = stat_card(cards, "ABSENT", "0")
+overall_percentage_label = stat_card(cards, "OVERALL ATTENDANCE", "0%")
+ranking_frame = tk.Frame(
+dashboard_page, bg=CARD,
+highlightthickness=1,
+highlightbackground=BORDER
+)
+ranking_frame.pack(fill="both", expand=True, padx=30, pady=10)
+tk.Label(
+ranking_frame,
+text="Employee Attendance Ranking",
+bg=CARD, fg=TEXT,
+font=("Arial", 16, "bold")
+).pack(anchor="w", padx=20, pady=(18, 3))
+893
+tk.Label(
+ranking_frame,
+text="Highest and lowest attendance are calculated from all saved records.",
+bg=CARD, fg=MUTED,
+font=("Arial", 9)
+).pack(anchor="w", padx=20, pady=(0, 10))
+900
+ranking_tree = ttk.Treeview(
+ranking_frame,
+columns=("Employee ID", "Employee", "Present", "Absent", "Total", "Percentage"),
+show="headings"
+)
+906
+for col, width in [
+("Employee ID", 130), ("Employee", 200), ("Present", 100),
+("Absent", 100), ("Total", 100), ("Percentage", 130)
+]:
+ranking_tree.heading(col, text=col)
+ranking_tree.column(col, width=width)
+913
+ranking_tree.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+915
+summary = tk.Frame(ranking_frame, bg=CARD)
+summary.pack(fill="x", padx=20, pady=(0, 18))
+918
+highest_label = tk.Label(
+summary,
+text="Highest Attendance\nNo data",
+bg="#ecfdf5", fg=GREEN,
+font=("Arial", 11, "bold"),
+pady=12
+)
+highest_label.pack(side="left", fill="x", expand=True, padx=(0, 5))
+927
+lowest_label = tk.Label(
+summary,
+text="Lowest Attendance\nNo data",
+bg="#fef2f2", fg=RED,
+font=("Arial", 11, "bold"),
+pady=12
+)
+lowest_label.pack(side="left", fill="x", expand=True, padx=(5, 0))
+936
+# ============================================================
+# ATTENDANCE PAGE
+# ============================================================
+attendance_page = tk.Frame(content, bg=BG)
+pages["Attendance"] = attendance_page
+tk.Label(
+attendance_page,
+text="Mark Attendance",
+bg=BG, fg=TEXT,
+font=("Arial", 25, "bold")
+).pack(anchor="w", padx=30, pady=(25, 3))
+
+949
+tk.Label(
+attendance_page,
+text="Record present/absent status and the reason for absence.",
+bg=BG, fg=MUTED,
+font=("Arial", 11)
+).pack(anchor="w", padx=30)
+956
+form = tk.Frame(
+attendance_page, bg=CARD,
+highlightthickness=1,
+highlightbackground=BORDER
+)
+form.pack(fill="x", padx=30, pady=15)
+tk.Label(form, text="Employee ID", bg=CARD, fg=TEXT,
+font=("Arial", 10, "bold")).grid(row=0, column=0, padx=15, pady=(18, 6), sticky="w")
+employee_id_entry = ttk.Combobox(form, width=14)
+employee_id_entry.grid(row=1, column=0, padx=15, pady=(0, 18))
+employee_id_entry.bind("<<ComboboxSelected>>", load_employee_name)
+employee_id_entry.bind("<FocusOut>", load_employee_name)
+employee_id_entry.bind("<KeyRelease>", load_employee_name)
+971
+tk.Label(form, text="Employee Name", bg=CARD, fg=TEXT,
+font=("Arial", 10, "bold")).grid(row=0, column=1, padx=15, pady=(18, 6), sticky="w")
+employee_name_entry = ttk.Entry(form, width= 20)
+employee_name_entry.grid(row=1, column=1, padx=15, pady=(0, 18))
+976
+tk.Label(form, text="Date (YYYY-MM-DD)", bg=CARD, fg=TEXT,
+font=("Arial", 10, "bold")).grid(row=0, column=2, padx=15, pady=(18, 6), sticky="w")
+date_entry = ttk.Entry(form, width=16)
+date_entry.grid(row=1, column=2, padx=15, pady=(0, 18))
+date_entry.insert(0, today())
+982
+tk.Label(form, text="Status", bg=CARD, fg=TEXT,
+font=("Arial", 10, "bold")).grid(row=0, column=3, padx=15, pady=(18, 6), sticky="w")
+status_combo = ttk.Combobox(
+form, values=["Present", "Absent"],
+state="readonly", width=12
+)
+status_combo.grid(row=1, column=3, padx=15, pady=(0, 18))
+990
+tk.Label(form, text="Absence Reason", bg=CARD, fg=TEXT,
+font=("Arial", 10, "bold")).grid(row=0, column=4, padx=15, pady=(18, 6), sticky="w")
+reason_entry = ttk.Entry(form, width=20)
+reason_entry.grid(row=1, column=4, padx=15, pady=(0, 18))
+995
+save_attendance_button = tk.Button(
+form,
+text="Save Attendance",
+command=save_attendance,
+bg=BLUE, fg=CARD,
+activebackground="#1d4ed8",
+font=("Arial", 10, "bold"),	relief="flat", padx=16, pady=9,	cursor="hand2"
+)
+save_attendance_button.grid(row=2, column=5, padx=15, pady=(0, 18))
+1007
+tk.Button(
+form,
+text="Generate Test Data (2 Months)",
+command=generate_sample_attendance,
+bg=GREEN, fg=CARD,
+activebackground="#15803d",
+font=("Arial", 10, "bold"),	relief="flat", padx=16, pady=9,	cursor="hand2"
+).grid(row=2, column=4, padx=15, pady=(0, 18), sticky="w")
+records_frame = tk.Frame(
+attendance_page, bg=CARD,
+highlightthickness=1,
+highlightbackground=BORDER
+)
+records_frame.pack(fill="both", expand=True, padx=30, pady=(0, 25))
+1025
+tk.Label(
+records_frame,
+text="All Attendance Records",
+
+bg=CARD, fg=TEXT,
+font=("Arial", 16, "bold")
+).pack(anchor="w", padx=20, pady=15)
+all_records_tree = ttk.Treeview(	records_frame,
+columns=("Employee ID", "Employee", "Date", "Status", "Reason"),	show="headings"
+)
+1038
+for col, width in [
+("Employee ID", 130), ("Employee", 200), ("Date", 150),
+("Status", 120), ("Reason", 350)
+]:
+all_records_tree.heading(col, text=col)
+all_records_tree.column(col, width=width)
+1045
+all_records_tree.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+1047
+attendance_context_menu = tk.Menu(root, tearoff= 0) attendance_context_menu.add_command(
+label="Update Attendance",
+command=update_selected_attendance
+)
+attendance_context_menu.add_command(
+label="Delete Attendance",
+command=delete_selected_attendance
+)
+all_records_tree.bind("<Button-3>", show_attendance_context_menu)
+1058
+# ============================================================
+# DATE REPORT
+# ============================================================
+date_page = tk.Frame(content, bg=BG) pages["Date Report"] = date_page
+tk.Label(
+date_page,
+text="Date-wise Attendance Search",	bg=BG, fg=TEXT,
+font=("Arial", 25, "bold")
+).pack(anchor="w", padx=30, pady=(25, 3))
+1071
+tk.Label(
+date_page,
+text="Search a date to find who was absent, who was present, and the absence reasons." ,	bg=BG, fg=MUTED,
+font=("Arial", 11)
+).pack(anchor="w", padx=30)
+1078
+search_bar = tk.Frame(date_page, bg=CARD) search_bar.pack(fill="x", padx=30, pady=15)
+tk.Label(
+search_bar,
+text="Date (YYYY-MM-DD)",
+bg=CARD, fg=TEXT,
+font=("Arial", 10, "bold")
+).pack(side="left", padx=(20, 10), pady=18)
+1088
+search_date_entry = ttk.Entry(search_bar, width=20) search_date_entry.pack(side="left", pady=18)
+search_date_entry.insert(0, today())
+1092
+tk.Button(
+search_bar,
+text="Search Date",
+command=load_date_report,
+bg=BLUE, fg=CARD,
+font=("Arial", 10, "bold"),	relief="flat", padx=18, pady=8,	cursor="hand2"
+).pack(side="left", padx=12)
+1102
+tk.Button(
+search_bar,
+text="Export CSV",
+command=lambda: export_report_to_csv(date_report_tree, "date_attendance_report.csv"),	bg=GREEN, fg=CARD,
+font=("Arial", 10, "bold"),
+
+relief="flat", padx=18, pady=8,	cursor="hand2"
+).pack(side="left", padx=4)
+1112
+date_report_title = tk.Label(	date_page,
+text="Date Report",
+bg=BG, fg=TEXT,
+font=("Arial", 15, "bold")
+)
+date_report_title.pack(anchor="w", padx=30, pady=(5, 8))
+1120
+date_frame = tk.Frame(	date_page, bg=CARD,
+highlightthickness=1,
+highlightbackground=BORDER
+)
+date_frame.pack(fill="both", expand=True, padx=30, pady=(0, 25))
+1127
+date_report_tree = ttk.Treeview(	date_frame,
+columns=("Employee ID", "Employee", "Date", "Status", "Reason"),	show="headings"
+)
+1133
+for col, width in [
+("Employee ID", 130), ("Employee", 210), ("Date", 150),
+("Status", 130), ("Reason", 350)
+]:
+date_report_tree.heading(col, text=col)
+date_report_tree.column(col, width=width)
+1140
+date_report_tree.pack(fill="both", expand=True, padx=20, pady=20) date_report_empty_label = tk.Label(
+date_frame, text="", bg=CARD, fg=MUTED, font=("Arial", 11) )
+1145
+# ============================================================
+# WEEKLY REPORT
+# ============================================================
+weekly_page = tk.Frame(content, bg=BG) pages["Weekly Report"] = weekly_page
+tk.Label(
+weekly_page,
+text="Weekly Attendance Report",	bg=BG, fg=TEXT,
+font=("Arial", 25, "bold")
+).pack(anchor="w", padx=30, pady=(25, 3))
+1158
+tk.Label(
+weekly_page,
+text="View present days, absent days, total records and attendance percentage.",	bg=BG, fg=MUTED,
+font=("Arial", 11)
+).pack(anchor="w", padx=30)
+1165
+week_bar = tk.Frame(weekly_page, bg=CARD) week_bar.pack(fill="x", padx=30, pady=15)
+tk.Label(
+week_bar,
+text="Any date in the week",  bg=CARD, fg=TEXT,
+font=("Arial", 10, "bold")
+).pack(side="left", padx=(20, 10), pady=18)
+1175
+week_entry = ttk.Entry(week_bar, width=20) week_entry.pack(side="left", pady=18)
+week_entry.insert(0, today())
+1179
+tk.Button(
+week_bar,
+text="Generate Weekly Report",	command=load_weekly_report,
+bg=BLUE, fg=CARD,
+font=("Arial", 10, "bold"),	relief="flat", padx=18, pady=8,	cursor="hand2"
+).pack(side="left", padx=12)
+
+1189
+tk.Button(
+week_bar,
+text="Export CSV",
+command=lambda: export_report_to_csv(weekly_tree, "weekly_attendance_report.csv"),	bg=GREEN, fg=CARD,
+font=("Arial", 10, "bold"),	relief="flat", padx=18, pady=8,	cursor="hand2"
+).pack(side="left", padx=4)
+1199
+weekly_title = tk.Label(	weekly_page,
+text="Weekly Attendance",
+bg=BG, fg=TEXT,
+font=("Arial", 15, "bold")
+)
+weekly_title.pack(anchor="w", padx=30, pady=(5, 8))
+1207
+weekly_frame = tk.Frame(	weekly_page, bg=CARD,
+highlightthickness=1,
+highlightbackground=BORDER
+)
+weekly_frame.pack(fill="both", expand=True, padx=30, pady=(0, 25))
+1214
+weekly_tree = ttk.Treeview(	weekly_frame,
+columns=("Employee ID", "Employee", "Present", "Absent", "Total", "Percentage"),	show="headings"
+)
+1220
+for col, width in [
+("Employee ID", 130), ("Employee", 210), ("Present", 100),
+("Absent", 100), ("Total", 100), ("Percentage", 130)
+]:
+weekly_tree.heading(col, text=col)
+weekly_tree.column(col, width=width)
+1227
+weekly_tree.pack(fill="both", expand=True, padx=20, pady=20) weekly_empty_label = tk.Label(
+weekly_frame, text="", bg=CARD, fg=MUTED, font=("Arial", 11) )
+1232
+# ============================================================
+# MONTHLY REPORT
+# ============================================================
+monthly_page = tk.Frame(content, bg=BG) pages["Monthly Report"] = monthly_page
+tk.Label(
+monthly_page,
+text="Monthly Attendance Report",	bg=BG, fg=TEXT,
+font=("Arial", 25, "bold")
+).pack(anchor="w", padx=30, pady=(25, 3))
+1245
+tk.Label(
+monthly_page,
+text="Analyze employee attendance for an entire month.",	bg=BG, fg=MUTED,
+font=("Arial", 11)
+).pack(anchor="w", padx=30)
+1252
+month_bar = tk.Frame(monthly_page, bg=CARD) month_bar.pack(fill="x", padx=30, pady=15)
+tk.Label(
+month_bar,
+text="Month (YYYY-MM)",
+bg=CARD, fg=TEXT,
+font=("Arial", 10, "bold")
+).pack(side="left", padx=(20, 10), pady=18)
+1262
+month_entry = ttk.Entry(month_bar, width=20) month_entry.pack(side="left", pady=18)
+month_entry.insert(0, datetime.now().strftime("%Y-%m"))
+1266
+tk.Button(
+month_bar,
+
+
